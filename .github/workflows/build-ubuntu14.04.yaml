@@ -49,8 +49,10 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 build-essential ca-certificates git qtbase5-dev qt5-default file
               qmake -query
+              # 注意：make 会进入 tools/linuxdeployqt 子目录编译，
+              # -include 必须用绝对路径（$PWD 在容器内即挂载点 /ws）
               qmake CONFIG+=release CONFIG+=force_debug_info CONFIG-=warning_clean \
-                    "QMAKE_CXXFLAGS+=-include qt52_compat.h" \
+                    "QMAKE_CXXFLAGS+=-include $PWD/qt52_compat.h" \
                     linuxdeployqt.pro
               make -j$(nproc)
               file bin/linuxdeployqt
