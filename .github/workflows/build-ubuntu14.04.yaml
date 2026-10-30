@@ -1,0 +1,70 @@
+name: Build linuxdeployqt (Ubuntu 14.04)
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: docker ubuntu:14.04 (glibc 2.19)
+    runs-on: ubuntu-latest
+    env:
+      # linuxdeployqt.pro 读取该变量作为 BUILD_NUMBER
+      TRAVIS_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Checkout (full history + tags, for version string)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 不能用 job 级 container: ubuntu:14.04 —— actions/checkout 的 node20
+      # 需要 glibc >= 2.28，trusty 只有 2.19。所以在宿主机 checkout，
+      # 再把工作区挂载进容器编译。
+      - name: Write Qt 5.2 compat shim (qInfo / noquote)
+        run: |
+          cat > qt52_compat.h <<'EOF'
+          #ifndef QT52_COMPAT_H
+          #define QT52_COMPAT_H
+          /* Ubuntu 14.04 源里只有 Qt 5.2：qInfo() 需要 Qt >= 5.5，
+           * QDebug::noquote() 需要 Qt >= 5.4。此垫片经 -include 注入，
+           * 不改动源码。 */
+          #include <QDebug>
+          #if QT_VERSION < QT_VERSION_CHECK(5, 5, 0)
+          inline QDebug qInfo() { return qDebug(); }
+          #define noquote space
+          #endif
+          #endif
+          EOF
+          # 保险：去掉可能的 CRLF
+          sed -i "s/\r$//" qt52_compat.h
+
+      - name: Build in ubuntu:14.04 container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/ws" \
+            -w /ws \
+            -e TRAVIS_BUILD_NUMBER \
+            ubuntu:14.04 \
+            bash -exc '
+              # trusty 已 EOL，apt 源迁到 old-releases.ubuntu.com
+              sed -i -e "s|archive.ubuntu.com|old-releases.ubuntu.com|g" \
+                     -e "s|security.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                build-essential ca-certificates git qtbase5-dev qt5-default file
+              qmake -query
+              qmake CONFIG+=release CONFIG+=force_debug_info CONFIG-=warning_clean \
+                    "QMAKE_CXXFLAGS+=-include qt52_compat.h" \
+                    linuxdeployqt.pro
+              make -j$(nproc)
+              file bin/linuxdeployqt
+              ldd bin/linuxdeployqt
+            '
+
+      - name: Upload artifact (plain ELF binary, not AppImage)
+        uses: actions/upload-artifact@v4
+        with:
+          name: linuxdeployqt-ubuntu14.04-x86_64
+          path: bin/linuxdeployqt
+          if-no-files-found: error
