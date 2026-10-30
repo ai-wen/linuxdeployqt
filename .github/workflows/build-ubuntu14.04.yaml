@@ -19,18 +19,24 @@ jobs:
       # 不能用 job 级 container: ubuntu:14.04 —— actions/checkout 的 node20
       # 需要 glibc >= 2.28，trusty 只有 2.19。所以在宿主机 checkout，
       # 再把工作区挂载进容器编译。
-      - name: Write Qt 5.2 compat shim (qInfo / noquote)
+      - name: Write Qt 5.2 / GCC 4.8 compat shim (qInfo / noquote / foreach)
         run: |
           cat > qt52_compat.h <<'EOF'
           #ifndef QT52_COMPAT_H
           #define QT52_COMPAT_H
-          /* Ubuntu 14.04 源里只有 Qt 5.2：qInfo() 需要 Qt >= 5.5，
-           * QDebug::noquote() 需要 Qt >= 5.4。此垫片经 -include 注入，
-           * 不改动源码。 */
+          /* Ubuntu 14.04: Qt 5.2 + GCC 4.8 兼容垫片, 经 -include 注入, 不改源码.
+           * 1) qInfo() 需要 Qt >= 5.5; QDebug::noquote() 需要 Qt >= 5.4.
+           * 2) GCC 4.8 的 Q_FOREACH 病态解析 bug (GCC bug 59244, 4.9 修复):
+           *    foreach(x, QStringList(y)) 会被解析成函数声明,
+           *    给容器整体加一层括号强制按表达式解析. */
           #include <QDebug>
           #if QT_VERSION < QT_VERSION_CHECK(5, 5, 0)
           inline QDebug qInfo() { return qDebug(); }
           #define noquote space
+          #endif
+          #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 5
+          #undef foreach
+          #define foreach(variable, container) Q_FOREACH(variable, (container))
           #endif
           #endif
           EOF
